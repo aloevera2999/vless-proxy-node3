@@ -1,0 +1,7 @@
+{
+  "name": "vless-proxy-node3",
+  "version": "1.0.0",
+  "description": "VLESS Proxy Node 3 - Hong Kong",
+  "main": "functions/index.js",
+  "type": "module"
+}
