@@ -219,45 +219,16 @@ async function vlessOverWSHandler(request) {
 
 /**
  * 处理 TCP 出站连接
+ * 参考 zizifn/edgetunnel 的正确实现
  */
 async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawClientData, webSocket, vlessResponseHeader, log) {
-    async function connectWithTimeout(address, port) {
-        return new Promise((resolve, reject) => {
-            const timeoutId = setTimeout(() => {
-                reject(new Error(`Connection timeout to ${address}:${port}`));
-            }, CONNECT_TIMEOUT);
-            
-            try {
-                const tcpSocket = connect({
-                    hostname: address,
-                    port: port,
-                });
-                
-                const socketTimeoutId = setTimeout(() => {
-                    if (tcpSocket && !tcpSocket.closed) {
-                        tcpSocket.close();
-                    }
-                }, SOCKET_TIMEOUT);
-                
-                tcpSocket.closed.then(() => {
-                    clearTimeout(socketTimeoutId);
-                }).catch(() => {
-                    clearTimeout(socketTimeoutId);
-                });
-                
-                clearTimeout(timeoutId);
-                resolve(tcpSocket);
-            } catch (error) {
-                clearTimeout(timeoutId);
-                reject(error);
-            }
-        });
-    }
-    
     async function connectAndWrite(address, port) {
-        const tcpSocket = await connectWithTimeout(address, port);
+        const tcpSocket = connect({
+            hostname: address,
+            port: port,
+        });
         remoteSocket.value = tcpSocket;
-        log(`Connected to ${address}:${port}`);
+        log(`connected to ${address}:${port}`);
         
         const writer = tcpSocket.writable.getWriter();
         await writer.write(rawClientData);
@@ -266,20 +237,18 @@ async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawCli
         return tcpSocket;
     }
     
-    try {
-        const tcpSocket = await connectAndWrite(addressRemote, portRemote);
-        remoteSocketToWS(tcpSocket, webSocket, vlessResponseHeader, null, log);
-    } catch (error) {
-        log(`Connection failed: ${error.message}`);
-        // 尝试使用代理IP
-        try {
-            const tcpSocket = await connectAndWrite(proxyIP, portRemote);
-            remoteSocketToWS(tcpSocket, webSocket, vlessResponseHeader, null, log);
-        } catch (proxyError) {
-            log(`Proxy connection also failed: ${proxyError.message}`);
+    async function retry() {
+        const tcpSocket = await connectAndWrite(proxyIP || addressRemote, portRemote);
+        tcpSocket.closed.catch(error => {
+            console.log('retry tcpSocket closed error', error);
+        }).finally(() => {
             safeCloseWebSocket(webSocket);
-        }
+        });
+        remoteSocketToWS(tcpSocket, webSocket, vlessResponseHeader, null, log);
     }
+    
+    const tcpSocket = await connectAndWrite(addressRemote, portRemote);
+    remoteSocketToWS(tcpSocket, webSocket, vlessResponseHeader, retry, log);
 }
 
 /**
